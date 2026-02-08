@@ -7,6 +7,7 @@ module.exports = {
     background: './src/background.ts',
     content: './src/content.ts',
     popup: './src/popup.ts',
+    xhr_interceptor: './src/xhr_interceptor.ts',
   },
   output: {
     path: path.resolve(__dirname, 'dist'),

@@ -4,19 +4,25 @@
   "description": "Chrome extension for PlayMetrics Calendar",
   "main": "index.js",
   "scripts": {
-    "build": "webpack --mode production",
+    "lint": "node -e \"JSON.parse(require('fs').readFileSync('manifest.json','utf8'))\" && eslint src/",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run lint && npm run typecheck && webpack --mode production",
     "watch": "webpack --mode development --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/chrome": "^0.1.36",
     "copy-webpack-plugin": "^13.0.1",
+    "eslint": "^9.39.2",
     "ts-loader": "^9.5.4",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18",
     "webpack": "^5.104.1",
     "webpack-cli": "^6.0.1"
   }
