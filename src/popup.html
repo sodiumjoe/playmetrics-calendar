@@ -60,6 +60,26 @@
     #error { color: #c62828; margin-top: 8px; display: none; }
     .player-list { margin: 0; padding: 0; list-style: none; }
     .player-list li { padding: 3px 0; border-bottom: 1px solid #f0f0f0; }
+    .import-section { margin-top: 12px; border-top: 1px solid #ddd; padding-top: 8px; }
+    .week-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .week-nav button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
+    .week-label { font-size: 12px; font-weight: 500; }
+    .import-target { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; }
+    .import-target select { flex: 1; font-size: 12px; padding: 3px 4px; border: 1px solid #ccc; border-radius: 3px; }
+    .ext-cal-group { margin-bottom: 6px; }
+    .ext-cal-label { font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px; }
+    .ext-type-label { font-size: 10px; font-weight: 500; color: #999; text-transform: uppercase; letter-spacing: 0.5px; margin: 4px 0 2px 0; }
+    .ext-events { max-height: 150px; overflow-y: auto; }
+    .ext-event { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid #f5f5f5; font-size: 11px; }
+    .ext-event input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+    .ext-event-time { color: #666; white-space: nowrap; min-width: 80px; }
+    .ext-event-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ext-event.imported .ext-event-summary { color: #2e7d32; }
+    #import-status { font-size: 11px; margin-top: 4px; min-height: 14px; }
+    #import-status.ok { color: #2e7d32; }
+    #import-status.error { color: #c62828; }
+    .ext-loading { font-size: 11px; color: #999; padding: 8px 0; }
+    #apply-btn { margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -80,6 +100,17 @@
   <button id="sync-btn">Sync Now</button>
   <h2>Players</h2>
   <ul id="player-list" class="player-list"></ul>
+  <div class="import-section">
+    <h2>Import Events</h2>
+    <div class="week-nav">
+      <button id="week-prev">&larr;</button>
+      <span id="week-label" class="week-label">-</span>
+      <button id="week-next">&rarr;</button>
+    </div>
+    <div id="ext-events-container"></div>
+    <button id="apply-btn" disabled>Apply</button>
+    <div id="import-status"></div>
+  </div>
   <h2>Recent Activity</h2>
   <div id="sync-log" class="log-list"></div>
   <div id="error"></div>

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   listEventsByICalUID,
+  listEvents,
+  getEvent,
+  insertEvent,
   importEvent,
   deleteEvent,
 } from '../google-calendar';
@@ -88,6 +91,76 @@ describe('deleteEvent', () => {
     mockFetch.mockResolvedValueOnce(new Response('Error', { status: 500 }));
     const result = await deleteEvent('cal-id', 'event-1');
     expect(result).toBe(false);
+  });
+});
+
+describe('listEvents', () => {
+  it('returns events with singleEvents and time range', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      items: [{ id: 'e1', summary: 'Event 1' }, { id: 'e2', summary: 'Event 2' }],
+    }));
+    const result = await listEvents('cal-id', '2026-02-10T00:00:00Z', '2026-02-17T00:00:00Z');
+    expect(result).toHaveLength(2);
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain('singleEvents=true');
+    expect(url).toContain('timeMin=');
+    expect(url).toContain('timeMax=');
+    expect(url).toContain('orderBy=startTime');
+  });
+
+  it('paginates through multiple pages', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'e1' }], nextPageToken: 'page2' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'e2' }] }));
+    const result = await listEvents('cal-id', '2026-02-10T00:00:00Z', '2026-02-17T00:00:00Z');
+    expect(result).toHaveLength(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns partial results on error mid-pagination', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'e1' }], nextPageToken: 'page2' }))
+      .mockResolvedValueOnce(new Response('Error', { status: 500 }));
+    const result = await listEvents('cal-id', '2026-02-10T00:00:00Z', '2026-02-17T00:00:00Z');
+    expect(result).toHaveLength(1);
+  });
+});
+
+describe('getEvent', () => {
+  it('returns event on success', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 'e1', summary: 'Test' }));
+    const result = await getEvent('cal-id', 'e1');
+    expect(result).toEqual({ id: 'e1', summary: 'Test' });
+  });
+
+  it('returns null on 404', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+    const result = await getEvent('cal-id', 'e1');
+    expect(result).toBeNull();
+  });
+
+  it('returns null on 410', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('Gone', { status: 410 }));
+    const result = await getEvent('cal-id', 'e1');
+    expect(result).toBeNull();
+  });
+});
+
+describe('insertEvent', () => {
+  it('returns created event on success', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 'new-1', summary: 'New' }));
+    const result = await insertEvent('cal-id', { summary: 'New' });
+    expect(result).toEqual({ id: 'new-1', summary: 'New' });
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toContain('/events');
+    expect(url).not.toContain('/events/import');
+    expect(init.method).toBe('POST');
+  });
+
+  it('returns null on error', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('Error', { status: 500 }));
+    const result = await insertEvent('cal-id', { summary: 'Fail' });
+    expect(result).toBeNull();
   });
 });
 

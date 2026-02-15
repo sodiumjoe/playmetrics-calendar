@@ -1,10 +1,12 @@
-import type { UnifiedEvent, CalendarResponse, EventType } from './types';
+import type { UnifiedEvent, CalendarResponse, EventType, ExternalEventInfo, ImportedEventRecord } from './types';
 import type { PlayerCalendarMapping } from './config';
 import { PLAYER_CALENDAR_MAP } from './config';
 import {
   listEventsByICalUID,
   listEventsByExtendedProperty,
+  getEvent,
   importEvent,
+  insertEvent,
   patchEvent,
   deleteEvent,
   GCalEvent,
@@ -248,4 +250,132 @@ export async function targetedSync(
       console.log(`[SYNC] Targeted delete: event not in Google Calendar, nothing to remove`);
     }
   }
+}
+
+const EXT_IMPORT_SOURCE = 'external-calendar-import';
+
+function extTrackingKey(sourceCalendarId: string, sourceEventId: string, targetCalendarId: string): string {
+  return `${sourceCalendarId}:${sourceEventId}:${targetCalendarId}`;
+}
+
+async function getImportedRecords(): Promise<Record<string, ImportedEventRecord>> {
+  const data = await chrome.storage.local.get('importedExternalEvents');
+  return (data.importedExternalEvents as Record<string, ImportedEventRecord>) ?? {};
+}
+
+async function saveImportedRecords(records: Record<string, ImportedEventRecord>): Promise<void> {
+  await chrome.storage.local.set({ importedExternalEvents: records });
+}
+
+export async function importExternalEvent(
+  ev: ExternalEventInfo,
+  targetCalendarId: string,
+): Promise<boolean> {
+  const eventBody: GCalEvent = {
+    summary: ev.summary,
+    location: ev.location,
+    description: ev.description,
+    start: { dateTime: ev.start, timeZone: ev.timeZone },
+    end: { dateTime: ev.end, timeZone: ev.timeZone },
+    extendedProperties: {
+      private: {
+        externalImportSource: EXT_IMPORT_SOURCE,
+        externalSourceCalendarId: ev.sourceCalendarId,
+        externalSourceEventId: ev.sourceEventId,
+      },
+    },
+  };
+
+  const created = await insertEvent(targetCalendarId, eventBody);
+  if (!created) {
+    await logSync('ext-import', ev.summary, false);
+    return false;
+  }
+
+  const records = await getImportedRecords();
+  const key = extTrackingKey(ev.sourceCalendarId, ev.sourceEventId, targetCalendarId);
+  records[key] = {
+    sourceCalendarId: ev.sourceCalendarId,
+    sourceEventId: ev.sourceEventId,
+    targetCalendarId,
+    targetEventId: created.id!,
+    summary: ev.summary,
+    lastSynced: Date.now(),
+  };
+  await saveImportedRecords(records);
+  await logSync('ext-import', ev.summary);
+  return true;
+}
+
+export async function removeImportedEvent(trackingKey: string): Promise<boolean> {
+  const records = await getImportedRecords();
+  const record = records[trackingKey];
+  if (!record) return false;
+
+  const ok = await deleteEvent(record.targetCalendarId, record.targetEventId);
+  delete records[trackingKey];
+  await saveImportedRecords(records);
+  await logSync('ext-remove', record.summary, ok);
+  return ok;
+}
+
+export async function syncExternalImports(): Promise<void> {
+  const records = await getImportedRecords();
+  const keys = Object.keys(records);
+  if (keys.length === 0) return;
+
+  console.log(`[SYNC] Syncing ${keys.length} external imports`);
+  let updated = false;
+
+  for (const key of keys) {
+    const record = records[key];
+    const sourceEvent = await getEvent(record.sourceCalendarId, record.sourceEventId);
+
+    if (!sourceEvent) {
+      console.log(`[SYNC] Source event gone, removing: ${record.summary}`);
+      const ok = await deleteEvent(record.targetCalendarId, record.targetEventId);
+      await logSync('ext-delete', record.summary, ok);
+      delete records[key];
+      updated = true;
+      continue;
+    }
+
+    const targetEvent = await getEvent(record.targetCalendarId, record.targetEventId);
+    if (!targetEvent) {
+      console.log(`[SYNC] Target event gone, removing tracking: ${record.summary}`);
+      delete records[key];
+      updated = true;
+      continue;
+    }
+
+    const needsPatch =
+      sourceEvent.summary !== targetEvent.summary ||
+      sourceEvent.location !== targetEvent.location ||
+      sourceEvent.description !== targetEvent.description ||
+      sourceEvent.start?.dateTime !== targetEvent.start?.dateTime ||
+      sourceEvent.end?.dateTime !== targetEvent.end?.dateTime;
+
+    if (needsPatch) {
+      console.log(`[SYNC] Updating external import: ${record.summary}`);
+      const result = await patchEvent(record.targetCalendarId, record.targetEventId, {
+        summary: sourceEvent.summary,
+        location: sourceEvent.location,
+        description: sourceEvent.description,
+        start: sourceEvent.start,
+        end: sourceEvent.end,
+      });
+      if (result) {
+        record.summary = sourceEvent.summary ?? record.summary;
+        record.lastSynced = Date.now();
+        updated = true;
+        await logSync('ext-patch', record.summary);
+      } else {
+        await logSync('ext-patch', record.summary, false);
+      }
+    }
+  }
+
+  if (updated) await saveImportedRecords(records);
+  await chrome.storage.local.set({ lastExternalSyncTime: Date.now() });
+  console.log('[SYNC] External import sync complete');
 }

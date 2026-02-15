@@ -119,6 +119,46 @@ export interface AttendanceUpdateMessage {
   };
 }
 
+export interface ImportedEventRecord {
+  sourceCalendarId: string;
+  sourceEventId: string;
+  targetCalendarId: string;
+  targetEventId: string;
+  summary: string;
+  lastSynced: number;
+}
+
+export interface ExternalEventInfo {
+  sourceCalendarId: string;
+  sourceEventId: string;
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  timeZone?: string;
+}
+
+export interface FetchExternalEventsMessage {
+  type: 'FETCH_EXTERNAL_EVENTS';
+  payload: { sourceCalendarId: string; timeMin: string; timeMax: string };
+}
+
+export interface ApplyExternalImportsMessage {
+  type: 'APPLY_EXTERNAL_IMPORTS';
+  payload: {
+    targetCalendarId: string;
+    toImport: ExternalEventInfo[];
+    toRemove: string[];
+  };
+}
+
+export interface ApplyExternalImportsResponse {
+  imported: number;
+  removed: number;
+  errors: string[];
+}
+
 export type BackgroundMessage =
   | AuthTokenMessage
   | CalendarDataMessage

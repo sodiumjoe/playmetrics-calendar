@@ -8,7 +8,11 @@ import {
   eventsEqual,
   getAttendingEvents,
   findEventInCache,
+  importExternalEvent,
+  removeImportedEvent,
+  syncExternalImports,
 } from '../sync';
+import type { ExternalEventInfo } from '../types';
 
 vi.mock('../config', () => ({
   PLAYER_CALENDAR_MAP: [
@@ -20,10 +24,17 @@ vi.mock('../config', () => ({
 vi.mock('../google-calendar', () => ({
   listEventsByICalUID: vi.fn(async () => []),
   listEventsByExtendedProperty: vi.fn(async () => []),
+  getEvent: vi.fn(async () => null),
   importEvent: vi.fn(async () => ({ id: 'gcal-1' })),
+  insertEvent: vi.fn(async () => ({ id: 'inserted-1' })),
   patchEvent: vi.fn(async () => ({ id: 'gcal-1' })),
   deleteEvent: vi.fn(async () => true),
 }));
+
+const mockInsertEvent = vi.mocked((await import('../google-calendar')).insertEvent);
+const mockDeleteEvent = vi.mocked((await import('../google-calendar')).deleteEvent);
+const mockGetEvent = vi.mocked((await import('../google-calendar')).getEvent);
+const mockPatchEvent = vi.mocked((await import('../google-calendar')).patchEvent);
 
 function makeEvent(overrides: Partial<UnifiedEvent> = {}): UnifiedEvent {
   return {
@@ -371,5 +382,201 @@ describe('findEventInCache', () => {
     const event = makeEvent({ id: 1, type: 'Practice' });
     const data = makeCalendarData([event]);
     expect(findEventInCache(data, 'game', 1)).toBeNull();
+  });
+});
+
+function makeExternalEvent(overrides: Partial<ExternalEventInfo> = {}): ExternalEventInfo {
+  return {
+    sourceCalendarId: 'src-cal-1@group',
+    sourceEventId: 'ext-event-1',
+    summary: 'External Game',
+    start: '2026-03-15T18:00:00Z',
+    end: '2026-03-15T20:00:00Z',
+    location: 'Stadium',
+    description: 'League match',
+    timeZone: 'America/Los_Angeles',
+    ...overrides,
+  };
+}
+
+describe('importExternalEvent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInsertEvent.mockResolvedValue({ id: 'inserted-1' });
+    const store = chrome.storage.local as unknown as { _store: Record<string, unknown> };
+    store._store = {};
+  });
+
+  it('inserts event and stores tracking record', async () => {
+    const ev = makeExternalEvent();
+    const result = await importExternalEvent(ev, 'target-cal@group');
+    expect(result).toBe(true);
+    expect(mockInsertEvent).toHaveBeenCalledOnce();
+    const [calId, body] = mockInsertEvent.mock.calls[0];
+    expect(calId).toBe('target-cal@group');
+    expect(body.summary).toBe('External Game');
+    expect(body.extendedProperties?.private?.externalImportSource).toBe('external-calendar-import');
+    expect(body.extendedProperties?.private?.externalSourceEventId).toBe('ext-event-1');
+
+    const data = await chrome.storage.local.get('importedExternalEvents');
+    const records = data.importedExternalEvents as Record<string, unknown>;
+    const key = 'src-cal-1@group:ext-event-1:target-cal@group';
+    expect(records[key]).toBeDefined();
+  });
+
+  it('returns false when insertEvent fails', async () => {
+    mockInsertEvent.mockResolvedValue(null);
+    const ev = makeExternalEvent();
+    const result = await importExternalEvent(ev, 'target-cal@group');
+    expect(result).toBe(false);
+  });
+});
+
+describe('removeImportedEvent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDeleteEvent.mockResolvedValue(true);
+    const store = chrome.storage.local as unknown as { _store: Record<string, unknown> };
+    store._store = {};
+  });
+
+  it('deletes event and removes tracking record', async () => {
+    const key = 'src-cal@group:ev-1:target-cal@group';
+    await chrome.storage.local.set({
+      importedExternalEvents: {
+        [key]: {
+          sourceCalendarId: 'src-cal@group',
+          sourceEventId: 'ev-1',
+          targetCalendarId: 'target-cal@group',
+          targetEventId: 'gcal-target-1',
+          summary: 'Test Event',
+          lastSynced: Date.now(),
+        },
+      },
+    });
+
+    const result = await removeImportedEvent(key);
+    expect(result).toBe(true);
+    expect(mockDeleteEvent).toHaveBeenCalledWith('target-cal@group', 'gcal-target-1');
+
+    const data = await chrome.storage.local.get('importedExternalEvents');
+    const records = data.importedExternalEvents as Record<string, unknown>;
+    expect(records[key]).toBeUndefined();
+  });
+
+  it('returns false for unknown tracking key', async () => {
+    const result = await removeImportedEvent('nonexistent-key');
+    expect(result).toBe(false);
+  });
+});
+
+describe('syncExternalImports', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const store = chrome.storage.local as unknown as { _store: Record<string, unknown> };
+    store._store = {};
+  });
+
+  it('does nothing when no imported records exist', async () => {
+    await syncExternalImports();
+    expect(mockGetEvent).not.toHaveBeenCalled();
+  });
+
+  it('deletes target when source event is gone', async () => {
+    const key = 'src-cal@group:ev-1:target-cal@group';
+    await chrome.storage.local.set({
+      importedExternalEvents: {
+        [key]: {
+          sourceCalendarId: 'src-cal@group',
+          sourceEventId: 'ev-1',
+          targetCalendarId: 'target-cal@group',
+          targetEventId: 'gcal-target-1',
+          summary: 'Gone Event',
+          lastSynced: Date.now(),
+        },
+      },
+    });
+    mockGetEvent.mockResolvedValue(null);
+    mockDeleteEvent.mockResolvedValue(true);
+
+    await syncExternalImports();
+    expect(mockDeleteEvent).toHaveBeenCalledWith('target-cal@group', 'gcal-target-1');
+
+    const data = await chrome.storage.local.get('importedExternalEvents');
+    const records = data.importedExternalEvents as Record<string, unknown>;
+    expect(records[key]).toBeUndefined();
+  });
+
+  it('patches target when source event changed', async () => {
+    const key = 'src-cal@group:ev-1:target-cal@group';
+    await chrome.storage.local.set({
+      importedExternalEvents: {
+        [key]: {
+          sourceCalendarId: 'src-cal@group',
+          sourceEventId: 'ev-1',
+          targetCalendarId: 'target-cal@group',
+          targetEventId: 'gcal-target-1',
+          summary: 'Old Summary',
+          lastSynced: Date.now(),
+        },
+      },
+    });
+
+    mockGetEvent
+      .mockResolvedValueOnce({ id: 'ev-1', summary: 'New Summary', location: 'New Place', start: { dateTime: 'T1' }, end: { dateTime: 'T2' } })
+      .mockResolvedValueOnce({ id: 'gcal-target-1', summary: 'Old Summary', location: 'Old Place', start: { dateTime: 'T1' }, end: { dateTime: 'T2' } });
+    mockPatchEvent.mockResolvedValue({ id: 'gcal-target-1' });
+
+    await syncExternalImports();
+    expect(mockPatchEvent).toHaveBeenCalledWith('target-cal@group', 'gcal-target-1', expect.objectContaining({ summary: 'New Summary' }));
+  });
+
+  it('skips patch when source and target are identical', async () => {
+    const key = 'src-cal@group:ev-1:target-cal@group';
+    await chrome.storage.local.set({
+      importedExternalEvents: {
+        [key]: {
+          sourceCalendarId: 'src-cal@group',
+          sourceEventId: 'ev-1',
+          targetCalendarId: 'target-cal@group',
+          targetEventId: 'gcal-target-1',
+          summary: 'Same',
+          lastSynced: Date.now(),
+        },
+      },
+    });
+
+    const event = { id: 'ev-1', summary: 'Same', location: 'Place', description: 'Desc', start: { dateTime: 'T1' }, end: { dateTime: 'T2' } };
+    mockGetEvent
+      .mockResolvedValueOnce(event)
+      .mockResolvedValueOnce({ ...event, id: 'gcal-target-1' });
+
+    await syncExternalImports();
+    expect(mockPatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('removes tracking when target event is gone', async () => {
+    const key = 'src-cal@group:ev-1:target-cal@group';
+    await chrome.storage.local.set({
+      importedExternalEvents: {
+        [key]: {
+          sourceCalendarId: 'src-cal@group',
+          sourceEventId: 'ev-1',
+          targetCalendarId: 'target-cal@group',
+          targetEventId: 'gcal-target-1',
+          summary: 'Test',
+          lastSynced: Date.now(),
+        },
+      },
+    });
+
+    mockGetEvent
+      .mockResolvedValueOnce({ id: 'ev-1', summary: 'Test' })
+      .mockResolvedValueOnce(null);
+
+    await syncExternalImports();
+    const data = await chrome.storage.local.get('importedExternalEvents');
+    const records = data.importedExternalEvents as Record<string, unknown>;
+    expect(records[key]).toBeUndefined();
   });
 });
