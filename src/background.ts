@@ -50,7 +50,7 @@ function buildCalendarFilterParam(): string {
   return JSON.stringify({
     start_date: fmt(start),
     end_date: fmt(end),
-    limit: 20,
+    limit: 500,
     offset: 0,
     only_my_events: true,
   });

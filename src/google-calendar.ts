@@ -72,8 +72,8 @@ export interface GCalEvent {
   summary?: string;
   location?: string;
   description?: string;
-  start?: { dateTime?: string; timeZone?: string };
-  end?: { dateTime?: string; timeZone?: string };
+  start?: { dateTime?: string; date?: string; timeZone?: string };
+  end?: { dateTime?: string; date?: string; timeZone?: string };
   iCalUID?: string;
   extendedProperties?: {
     private?: Record<string, string>;

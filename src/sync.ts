@@ -70,12 +70,22 @@ export function buildGoogleEvent(event: UnifiedEvent, playerId: number): GCalEve
   if (event.details.uniform) descriptionParts.push(`Uniform: ${event.details.uniform}`);
   if (event.details.arrival_minutes) descriptionParts.push(`Arrive ${event.details.arrival_minutes} min early`);
 
+  const isAllDay = event.start_datetime === event.end_datetime;
+  const startEnd = isAllDay
+    ? {
+        start: { date: event.start_datetime.split('T')[0] },
+        end: { date: event.end_datetime.split('T')[0] },
+      }
+    : {
+        start: { dateTime: event.start_datetime, timeZone: timezone },
+        end: { dateTime: event.end_datetime, timeZone: timezone },
+      };
+
   return {
     summary: buildSummary(event),
     location,
     description: descriptionParts.join('\n') || undefined,
-    start: { dateTime: event.start_datetime, timeZone: timezone },
-    end: { dateTime: event.end_datetime, timeZone: timezone },
+    ...startEnd,
     iCalUID: buildICalUID(evType, event.id, playerId),
     extendedProperties: {
       private: {
@@ -94,7 +104,9 @@ export function eventsEqual(gcal: GCalEvent, fresh: GCalEvent): boolean {
     gcal.location === fresh.location &&
     gcal.description === fresh.description &&
     gcal.start?.dateTime === fresh.start?.dateTime &&
-    gcal.end?.dateTime === fresh.end?.dateTime
+    gcal.end?.dateTime === fresh.end?.dateTime &&
+    gcal.start?.date === fresh.start?.date &&
+    gcal.end?.date === fresh.end?.date
   );
 }
 
@@ -115,6 +127,15 @@ export async function upsertEvent(
 
   const current = existing[0];
   if (eventsEqual(current, gcalEvent)) {
+    return;
+  }
+
+  const allDayChanged = !!current.start?.date !== !!gcalEvent.start?.date;
+  if (allDayChanged) {
+    await deleteEvent(calendarId, current.id!);
+    const result = await importEvent(calendarId, gcalEvent);
+    if (result) await logSync('reimport', gcalEvent.summary ?? '');
+    else await logSync('reimport', gcalEvent.summary ?? '', false);
     return;
   }
 
