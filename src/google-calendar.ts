@@ -24,9 +24,12 @@ async function gcalFetch(
     lastToken = token;
 
     let resp: Response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       resp = await fetch(`${GCAL_BASE}${path}`, {
         ...init,
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -34,11 +37,13 @@ async function gcalFetch(
         },
       });
     } catch (err) {
+      clearTimeout(timeoutId);
       console.error(`[GCAL] Network error on attempt ${attempt + 1}:`, err);
       if (attempt === MAX_RETRIES) throw err;
       await sleep(Math.min(INITIAL_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS));
       continue;
     }
+    clearTimeout(timeoutId);
 
     if (resp.status === 401 && attempt === 0) {
       await chrome.identity.removeCachedAuthToken({ token });

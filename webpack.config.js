@@ -26,6 +26,15 @@ module.exports = {
       },
     ],
   },
+  optimization: {
+    minimizer: [
+      new (require('terser-webpack-plugin'))({
+        terserOptions: {
+          mangle: { safari10: true },
+        },
+      }),
+    ],
+  },
   plugins: [
     new CopyPlugin({
       patterns: [

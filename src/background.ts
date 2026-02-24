@@ -68,14 +68,19 @@ async function fetchPlayMetricsCalendar(): Promise<CalendarResponse | null> {
     calendar_filter: buildCalendarFilterParam(),
   });
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
   try {
     const resp = await fetch(`${PM_CALENDAR_URL}?${params}`, {
+      signal: controller.signal,
       headers: {
         'Accept': 'application/json',
         'Firebase-Token': stored.firebaseToken as string,
         'pm-access-key': stored.accessKey as string,
       },
     });
+
+    clearTimeout(timeoutId);
 
     if (!resp.ok) {
       if (resp.status === 401 || resp.status === 403) {
@@ -90,6 +95,7 @@ async function fetchPlayMetricsCalendar(): Promise<CalendarResponse | null> {
     const data: CalendarResponse = await resp.json();
     return data;
   } catch (err) {
+    clearTimeout(timeoutId);
     console.error('[PM] Fetch error:', err);
     return null;
   }
@@ -113,14 +119,23 @@ async function periodicSync(): Promise<void> {
   }
 }
 
+const PENDING_SYNC_PREFIX = 'pendingSync:';
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     periodicSync();
+  } else if (alarm.name.startsWith(PENDING_SYNC_PREFIX)) {
+    const storageKey = alarm.name;
+    chrome.storage.session.get(storageKey).then((data) => {
+      const params = data[storageKey] as { eventType: Parameters<typeof targetedSync>[0]; eventId: number; playerId: number; status: string } | undefined;
+      if (!params) return;
+      chrome.storage.session.remove(storageKey);
+      targetedSync(params.eventType, params.eventId, params.playerId, params.status).catch((err) =>
+        console.error('[SYNC] Targeted sync failed:', err)
+      );
+    });
   }
 });
-
-const attendanceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const DEBOUNCE_MS = 1500;
 
 function debouncedTargetedSync(
   eventType: Parameters<typeof targetedSync>[0],
@@ -129,17 +144,9 @@ function debouncedTargetedSync(
   status: string,
 ) {
   const key = `${eventType}-${eventId}-${playerId}`;
-  const existing = attendanceTimers.get(key);
-  if (existing) clearTimeout(existing);
-  attendanceTimers.set(
-    key,
-    setTimeout(() => {
-      attendanceTimers.delete(key);
-      targetedSync(eventType, eventId, playerId, status).catch((err) =>
-        console.error('[SYNC] Targeted sync failed:', err)
-      );
-    }, DEBOUNCE_MS),
-  );
+  const alarmName = `${PENDING_SYNC_PREFIX}${key}`;
+  chrome.storage.session.set({ [alarmName]: { eventType, eventId, playerId, status } });
+  chrome.alarms.create(alarmName, { delayInMinutes: 0.025 });
 }
 
 type AnyMessage =

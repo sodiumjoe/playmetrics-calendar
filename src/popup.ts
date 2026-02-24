@@ -366,10 +366,13 @@ authBtn.addEventListener('click', async () => {
 syncBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
   syncBtn.textContent = 'Syncing...';
-  setTimeout(() => {
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.lastSyncTime) {
     syncBtn.textContent = 'Sync Now';
     updateStatuses();
-  }, 5000);
+  }
 });
 
 weekPrevBtn.addEventListener('click', () => { weekOffset--; fetchExternalEvents(); });

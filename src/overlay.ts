@@ -545,6 +545,10 @@ function initOverlay() {
   async function togglePanel() {
     const isHidden = panel.classList.toggle('hidden');
     await chrome.storage.local.set({ overlayVisible: !isHidden });
+    if (!isHidden) {
+      updateStatuses();
+      fetchExternalEvents();
+    }
   }
 
   toggleBtn.addEventListener('click', togglePanel);
@@ -571,10 +575,13 @@ function initOverlay() {
   syncBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
     syncBtn.textContent = 'Syncing...';
-    setTimeout(() => {
+  });
+
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.lastSyncTime) {
       syncBtn.textContent = 'Sync Now';
       updateStatuses();
-    }, 5000);
+    }
   });
 
   weekPrevBtn.addEventListener('click', () => { weekOffset--; fetchExternalEvents(); });
@@ -582,10 +589,12 @@ function initOverlay() {
   applyBtn.addEventListener('click', applyChanges);
 
   chrome.storage.local.get('overlayVisible').then(data => {
-    if (data.overlayVisible) panel.classList.remove('hidden');
+    if (data.overlayVisible) {
+      panel.classList.remove('hidden');
+      fetchExternalEvents();
+    }
   });
 
   updateStatuses();
   renderPlayers();
-  fetchExternalEvents();
 }
